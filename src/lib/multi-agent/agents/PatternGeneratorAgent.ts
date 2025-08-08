@@ -48,17 +48,32 @@ export class PatternGeneratorAgent extends BaseAgent {
   }
   
   private async generateStrategiesWithLLM(context: ResearchContext): Promise<void> {
-    console.log(`🧠 PatternGenerator: Generating dynamic regex patterns via LLM analysis`);
+    console.log(`🧠 PatternGenerator: Generating dynamic patterns via LLM analysis`);
     
-    // ACCESS DataInspector's shared insights for intelligent regex generation
+    // 🎯 CRITICAL: Check for PlanningAgent's extraction strategy first
+    const extractionStrategy = (context.sharedKnowledge as any).extractionStrategy;
+    if (extractionStrategy) {
+      console.log(`✅ Using PlanningAgent extraction strategy:`, {
+        documentType: extractionStrategy.documentType,
+        queryIntent: extractionStrategy.queryIntent,
+        patternCategories: Object.keys(extractionStrategy.patternCategories).length
+      });
+      
+      // Use PlanningAgent's strategy to create targeted patterns
+      await this.generatePatternsFromStrategy(context, extractionStrategy);
+      return;
+    }
+    
+    // FALLBACK: Use DataInspector's shared insights for intelligent regex generation
+    console.log(`⚠️ No extraction strategy from PlanningAgent, using DataInspector insights`);
     const documentInsights = context.sharedKnowledge.documentInsights;
     const hasDocumentAnalysis = documentInsights && Object.keys(documentInsights).length > 0;
     
     // Sample actual document content for pattern analysis (ZERO HARDCODING)
     const sampleContent = context.ragResults.chunks.length > 0 
       ? context.ragResults.chunks
-          .slice(0, 5)  // Use more samples for better pattern discovery
-          .map((chunk, i) => `SAMPLE ${i + 1}:\n${chunk.text.substring(0, 400)}`)
+          .slice(0, Math.min(8, context.ragResults.chunks.length))  // Use more samples for better pattern discovery
+          .map((chunk, i) => `SAMPLE ${i + 1}:\n${chunk.text.substring(0, 600)}`)
           .join('\n\n---\n\n')
       : `NO DOCUMENT SAMPLES AVAILABLE - Generate generic patterns based on query intent.
 
@@ -70,9 +85,23 @@ Since no document content is available, generate patterns that would typically e
 - Key terms from the query context
 
 Example for this query: Generate patterns to find project names, person names, rankings, etc.`;
-      
-    // 🔥 GEMMA COMPATIBILITY: Use simplified prompt for smaller models to avoid complexity overload
-    const regexGenerationPrompt = this.createModelOptimizedPrompt(context, hasDocumentAnalysis, documentInsights, sampleContent);
+
+    // STEP 1: Extract document-specific terms from actual content
+    const documentSpecificTerms = await this.extractDocumentTerms(context, sampleContent);
+    
+    // STEP 2: Generate patterns combining document terms + query intent
+    const regexGenerationPrompt = this.createContentAwarePrompt(context, hasDocumentAnalysis, documentInsights, sampleContent, documentSpecificTerms);
+
+    // 🐛 DEBUG: Log actual content being sent to LLM
+    console.log(`🔍 DEBUG PatternGenerator Input Analysis:`);
+    console.log(`- Query: "${context.query}"`);
+    console.log(`- Chunks available: ${context.ragResults.chunks.length}`);
+    console.log(`- Sample content length: ${sampleContent.length}`);
+    console.log(`- Document specific terms: [${documentSpecificTerms.join(', ')}]`);
+    console.log(`- Sample content preview (first 300 chars):`);
+    console.log(sampleContent.substring(0, 300) + '...');
+    console.log(`- Full prompt being sent to LLM (first 800 chars):`);
+    console.log(regexGenerationPrompt.substring(0, 800) + '...');
 
     try {
       // Report progress: Calling LLM for pattern generation
@@ -187,7 +216,7 @@ ${response}
 ✅ **Generated Targeted Patterns**: ${regexPatterns.length} context-aware regex patterns
 ${regexPatterns.map((pattern, i) => `${i + 1}. ${pattern}`).join('\n')}
 
-🎯 **Context Preservation**: DataInspector's specific insights (e.g., "Tyler's personal speedruns") preserved and used for targeted pattern generation`;
+🎯 **Context Preservation**: DataInspector's specific insights preserved and used for targeted pattern generation`;
       
       this.setReasoning(reasoningText);
       
@@ -578,6 +607,109 @@ NO GENERIC ASSUMPTIONS! Only patterns that match the actual content structure yo
   }
 
   /**
+   * Extract document-specific terms from actual content for pattern generation
+   */
+  private async extractDocumentTerms(context: ResearchContext, sampleContent: string): Promise<string[]> {
+    if (context.ragResults.chunks.length === 0) {
+      return [];
+    }
+
+    try {
+      this.progressCallback?.onAgentProgress(this.name, 25, 'Extracting document-specific terms');
+      
+      const termExtractionPrompt = `Analyze this document content and extract specific terms, names, and concepts that are unique to this document:
+
+${sampleContent}
+
+USER QUERY: "${context.query}"
+
+Extract key terms that would be useful for finding information relevant to the query. Look for:
+- Specific names (people, projects, technologies, methods)
+- Technical terms and acronyms (e.g., GRPO, CNN, API names)
+- Measurement units or specific values
+- Domain-specific terminology
+
+Return ONLY a comma-separated list of the most important terms you find in the content above.
+Focus on terms that appear in the actual content, not generic assumptions.
+
+Example format: GRPO, neural networks, batch size, accuracy metrics, PyTorch`;
+
+      const response = await this.llm(termExtractionPrompt);
+      
+      // 🐛 DEBUG: Log what LLM returned for term extraction
+      console.log(`🔍 DEBUG Term Extraction:`);
+      console.log(`- Input content preview: ${sampleContent.substring(0, 200)}...`);
+      console.log(`- LLM response for terms: "${response}"`);
+      
+      const terms = response
+        .split(',')
+        .map(term => term.trim())
+        .filter(term => term.length > 1 && term.length < 50)
+        .slice(0, 10); // Limit to top 10 terms
+
+      console.log(`🎯 Extracted document-specific terms: ${terms.join(', ')}`);
+      return terms;
+    } catch (error) {
+      console.warn('🔧 Term extraction failed, proceeding without document-specific terms:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Create content-aware prompt that combines document analysis + specific terms + query intent
+   */
+  private createContentAwarePrompt(
+    context: ResearchContext,
+    hasDocumentAnalysis: boolean,
+    documentInsights: any,
+    sampleContent: string,
+    documentSpecificTerms: string[]
+  ): string {
+    const hasTerms = documentSpecificTerms.length > 0;
+    
+    return `/no_think
+
+PATTERN GENERATION FOR INTELLIGENT EXTRACTION
+
+USER QUERY: "${context.query}"
+
+${hasDocumentAnalysis ? `
+🧠 DOCUMENT ANALYSIS (from DataInspector):
+- Document Type: ${documentInsights.documentType}
+- Content Areas: ${documentInsights.contentAreas?.join(', ')}
+- Extraction Strategy: ${documentInsights.extractionStrategy}
+` : ''}
+
+${hasTerms ? `
+🎯 DOCUMENT-SPECIFIC TERMS FOUND:
+${documentSpecificTerms.join(', ')}
+
+These terms were extracted from the actual document content. Generate patterns that can find these specific terms and related information.
+` : ''}
+
+📄 ACTUAL DOCUMENT CONTENT:
+${sampleContent}
+
+🎯 GENERATE REGEX PATTERNS for extracting information relevant to: "${context.query}"
+
+Create patterns that will find:
+1. Query-relevant information (based on what the user is asking)
+${hasTerms ? `2. Document-specific terms: ${documentSpecificTerms.join(', ')}` : ''}
+3. Related technical information visible in the content above
+
+CRITICAL RULES:
+- Analyze the ACTUAL content above, don't assume formats
+- Generate patterns for terms that actually appear in the content
+- Include both specific terms and broader context patterns
+- Use proper regex syntax: /pattern/gi
+
+Format each pattern as:
+/your_pattern_here/gi
+
+Generate 3-6 effective patterns:`;
+  }
+
+  /**
    * Normalize pattern to standard /pattern/flags format
    */
   private normalizePattern(line: string): string | null {
@@ -676,6 +808,169 @@ NO GENERIC ASSUMPTIONS! Only patterns that match the actual content structure yo
     }
     
     return false; // Default: pattern is valid
+  }
+
+  /**
+   * 🎯 CRITICAL: Generate patterns from PlanningAgent's extraction strategy
+   * This creates query-aligned patterns based on DataInspector's comprehensive analysis
+   */
+  private async generatePatternsFromStrategy(context: ResearchContext, strategy: any): Promise<void> {
+    console.log(`🎯 PatternGenerator: Creating patterns from extraction strategy`);
+    
+    const patterns = [];
+    const { patternCategories, queryIntent, documentType } = strategy;
+    
+    // Generate patterns for each category dynamically
+    
+    // 1. People patterns (no hardcoding - from DataInspector analysis)
+    if (patternCategories.people.length > 0) {
+      console.log(`👥 Creating patterns for ${patternCategories.people.length} people`);
+      patternCategories.people.forEach((person: string) => {
+        patterns.push({
+          description: `Person pattern for ${person}`,
+          examples: [],
+          extractionStrategy: `Extract mentions of ${person} and their work`,
+          confidence: 0.9,
+          regexPattern: `/${person}[^\\n]*(?:developed|created|proposes|implements)[^\\n]*/gi`
+        });
+        
+        // Also capture authorship patterns
+        patterns.push({
+          description: `Authorship pattern for ${person}`,
+          examples: [],
+          extractionStrategy: `Extract ${person} as author`,
+          confidence: 0.8,
+          regexPattern: `/(?:author|by|from)\\s*[^\\n]*${person}[^\\n]*/gi`
+        });
+      });
+    }
+
+    // 2. Method patterns (query-aligned)
+    if (patternCategories.methods.length > 0 && (queryIntent.includes('methodology') || queryIntent.includes('performance'))) {
+      console.log(`🔬 Creating patterns for ${patternCategories.methods.length} methods`);
+      patternCategories.methods.forEach((method: string) => {
+        patterns.push({
+          description: `Method pattern for ${method}`,
+          examples: [],
+          extractionStrategy: `Extract ${method} methodology and details`,
+          confidence: 0.9,
+          regexPattern: `/${method}[^\\n]*(?:algorithm|approach|method|technique)[^\\n]*/gi`
+        });
+        
+        // Performance-focused patterns for "best" queries
+        if (queryIntent.includes('performance')) {
+          patterns.push({
+            description: `Performance pattern for ${method}`,
+            examples: [],
+            extractionStrategy: `Extract ${method} performance and results`,
+            confidence: 0.9,
+            regexPattern: `/(?:${method}[^\\n]*(?:performance|accuracy|results?|metrics?|benchmark)[^\\n]*|(?:performance|accuracy|results?|metrics?|benchmark)[^\\n]*${method}[^\\n]*)/gi`
+          });
+        }
+      });
+    }
+
+    // 3. Concept patterns (technical terms and domain concepts)
+    if (patternCategories.concepts.length > 0) {
+      console.log(`💡 Creating patterns for ${patternCategories.concepts.length} concepts`);
+      patternCategories.concepts.forEach((concept: string) => {
+        patterns.push({
+          description: `Concept pattern for ${concept}`,
+          examples: [],
+          extractionStrategy: `Extract information about ${concept}`,
+          confidence: 0.8,
+          regexPattern: `/${concept}[^\\n]*(?:is|are|involves|includes|means|refers)[^\\n]*/gi`
+        });
+      });
+    }
+
+    // 4. Document-type specific patterns
+    if (documentType === 'Research Paper') {
+      console.log(`📄 Adding Research Paper specific patterns`);
+      patterns.push({
+        description: 'Abstract section',
+        examples: [],
+        extractionStrategy: 'Extract abstract content',
+        confidence: 0.8,
+        regexPattern: '/(?:abstract|summary):\\s*([^\\n]{50,300})/gi'
+      });
+      
+      patterns.push({
+        description: 'Results section',
+        examples: [],
+        extractionStrategy: 'Extract results and conclusions',
+        confidence: 0.8,
+        regexPattern: '/(?:results?|conclusions?):\\s*([^\\n]{30,200})/gi'
+      });
+      
+      patterns.push({
+        description: 'Performance metrics',
+        examples: [],
+        extractionStrategy: 'Extract numerical results and metrics',
+        confidence: 0.9,
+        regexPattern: '/(?:accuracy|performance|score|metric)\\s*:?\\s*([\\d.]+%?)/gi'
+      });
+    }
+
+    // 5. Query-specific enhancement patterns
+    if (queryIntent === 'performance_ranking') {
+      console.log(`🏆 Adding performance ranking patterns`);
+      patterns.push({
+        description: 'Ranking indicators',
+        examples: [],
+        extractionStrategy: 'Extract ranking and comparison language',
+        confidence: 0.9,
+        regexPattern: '/(?:best|top|highest|superior|outperforms?|better than|exceeds)[^\\n]*/gi'
+      });
+      
+      patterns.push({
+        description: 'Comparative metrics',
+        examples: [],
+        extractionStrategy: 'Extract comparative performance data',
+        confidence: 0.9,
+        regexPattern: '/(?:vs|versus|compared to|against)[^\\n]*([\\d.]+%?)[^\\n]*/gi'
+      });
+    }
+
+    console.log(`✅ Generated ${patterns.length} strategy-based patterns:`, patterns.map(p => p.description));
+
+    // Initialize patterns array if it doesn't exist
+    if (!context.patterns) {
+      context.patterns = [];
+    }
+
+    // Add all strategy-based patterns
+    context.patterns.push(...patterns);
+
+    // Store generation details in shared knowledge
+    context.sharedKnowledge.extractionStrategies = {
+      generatedPatterns: patterns.map(p => p.regexPattern),
+      generationMethod: 'planning_agent_strategy',
+      basedOnExtractionStrategy: true,
+      timestamp: Date.now(),
+      agentSource: 'PatternGenerator',
+      strategyUsed: strategy
+    };
+
+    // Set detailed reasoning
+    const reasoningText = `🎯 **PatternGenerator: Strategy-Based Pattern Generation**
+
+📝 **Query**: "${context.query}"
+🎯 **Query Intent**: ${queryIntent}
+📊 **Document Type**: ${documentType}
+
+🧠 **PlanningAgent Strategy Applied**:
+- **People Patterns**: ${patternCategories.people.length} patterns for people mentioned in documents
+- **Method Patterns**: ${patternCategories.methods.length} patterns for techniques and algorithms  
+- **Concept Patterns**: ${patternCategories.concepts.length} patterns for domain concepts
+- **Document-Specific**: Additional patterns for ${documentType} structure
+
+✅ **Generated Patterns**: ${patterns.length} targeted patterns aligned with query intent and document analysis
+🎯 **Strategy Alignment**: Patterns created to extract information specifically relevant to "${context.query}" from ${documentType} content
+
+🔥 **Key Innovation**: Patterns are dynamically generated from DataInspector's comprehensive analysis, ensuring extraction focuses on query-relevant content instead of generic term matching.`;
+
+    this.setReasoning(reasoningText);
   }
 
   /**

@@ -129,6 +129,7 @@ export interface UseResearchReturn {
   performIntelligentResearch: (query: string) => Promise<void>;
   handleStepClick: (step: ResearchStep) => void;
   clearResearchSteps: () => void;
+  rerunSynthesis: () => Promise<void>;
 }
 
 export function useResearch(
@@ -929,6 +930,9 @@ export function useResearch(
       return;
     }
 
+    // Clear previous results immediately when starting new research
+    setResults("");
+    setResearchResult(null);
     setIsIntelligentResearching(true);
     setIsGenerating(true);
     setIsStreaming(true);
@@ -1022,6 +1026,48 @@ export function useResearch(
     processedStepIds.current.clear();
   }, [researchStepsState]);
 
+  // Rerun synthesis function - restarts the intelligent research process
+  const rerunSynthesis = useCallback(async () => {
+    if (!prompt.trim() || !isAIReady) {
+      console.warn('⚠️ Cannot rerun synthesis: missing query or AI not ready');
+      return;
+    }
+
+    setIsGenerating(true);
+    setIsStreaming(true);
+    setThinkingOutput("🔄 Rerunning intelligent research and synthesis...");
+
+    try {
+      console.log('🔄 Rerunning synthesis for query:', prompt);
+      
+      // Clear previous results and restart the research process
+      // This will use the fixed DataAnalyzer infinite loop logic
+      const result = await researchOrchestrator.executeResearch(prompt);
+      
+      if (result && result.finalAnswer) {
+        setResearchResult(result);
+        setResults(result.finalAnswer);
+        setThinkingOutput(`✅ Synthesis rerun completed: ${Math.round(result.confidence * 100)}% confidence`);
+        
+        console.log('✅ Synthesis rerun successful:', {
+          confidence: result.confidence,
+          answerLength: result.finalAnswer.length
+        });
+      } else {
+        throw new Error('Synthesis rerun returned no result');
+      }
+
+    } catch (error) {
+      console.error('❌ Synthesis rerun failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setResults(`Synthesis rerun failed: ${errorMessage}\n\nPlease check the logs and try again.`);
+      setThinkingOutput("❌ Synthesis rerun failed. Check console for details.");
+    } finally {
+      setIsGenerating(false);
+      setIsStreaming(false);
+    }
+  }, [prompt, isAIReady, researchOrchestrator]);
+
   return {
     prompt,
     setPrompt,
@@ -1062,6 +1108,7 @@ export function useResearch(
     performIntelligentResearch,
     handleStepClick: researchStepsState.handleStepClick,
     clearResearchSteps,
+    rerunSynthesis,
   };
 }
 

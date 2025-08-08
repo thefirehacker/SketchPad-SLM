@@ -48,6 +48,7 @@ interface ChatMessage {
   thinkTokens?: string;
   ragContext?: any;
   webSearchContext?: any;
+  researchSteps?: ResearchStep[]; // Store research steps per message
 }
 
 interface ResearchOutputProps {
@@ -690,12 +691,13 @@ export function ResearchOutput({
                 content: cleanContent,
                 thinkingOutput,
                 thinkTokens: thinkTokens || undefined,
+                researchSteps: researchSteps && researchSteps.length > 0 ? [...researchSteps] : undefined, // Store research steps with message
               }
             : msg
         )
       );
     }
-  }, [researchResults, thinkingOutput, currentMessageId]);
+  }, [researchResults, thinkingOutput, currentMessageId, researchSteps]);
 
   // Clear current message when streaming stops
   useEffect(() => {
@@ -943,9 +945,10 @@ export function ResearchOutput({
             ) : (
               <div className="space-y-6">
                 {/* Perplexity-style research process display */}
-                {researchSteps && researchSteps.length > 0 && (
+                {((message.researchSteps && message.researchSteps.length > 0) || 
+                  (isCurrentMessage && researchSteps && researchSteps.length > 0)) && (
                   <PerplexityStyleResearch
-                    steps={researchSteps}
+                    steps={message.researchSteps || researchSteps}
                     isActive={isCurrentMessage && isStreaming}
                     className="mb-6"
                   />

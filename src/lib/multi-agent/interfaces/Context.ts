@@ -61,7 +61,7 @@ export interface DocumentRelationship {
   type: 'tutorial' | 'comparison' | 'reference' | 'example';
   sourceDoc: string;
   targetDoc: string;
-  description: string; // How they relate (e.g., "Tyler's methods for Rutwik to learn")
+  description: string; // How they relate (e.g., "Person A's methods for Person B to learn")
 }
 
 export interface Pattern {
@@ -84,7 +84,7 @@ export interface ExtractedItem {
   sourceDocument?: string; // Which document this item comes from
   entityOwner?: string; // Which person/entity this fact belongs to
   factType?: 'achievement' | 'skill' | 'experience' | 'method' | 'result'; // Type of fact
-  attribution?: string; // Clear attribution text (e.g., "Tyler's achievement", "Rutwik's skill")
+  attribution?: string; // Clear attribution text (e.g., "Person A's achievement", "Person B's skill")
 }
 
 export interface Synthesis {
@@ -141,6 +141,29 @@ export interface ResearchContext {
     totalChunksProcessed: number;
     searchApproach: 'claude_code_style' | 'traditional_rag';
     chunksFromStorage: number; // How many chunks came from RxDB vs generated
+  };
+  
+  // New properties for multi-synthesis agents
+  analyzedData?: {
+    cleaned: ExtractedItem[];
+    categorized: any[];
+    insights: string;
+  };
+  
+  reportSections?: {
+    executive: string;
+    findings: string;
+    details: string;
+  };
+  
+  citations?: {
+    sources: string[];
+    attributions: string[];
+  };
+  
+  summary?: {
+    executive: string;
+    keyFindings: string[];
   };
 }
 

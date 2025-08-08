@@ -26,6 +26,21 @@ export interface PlanStep {
   priority: 'high' | 'medium' | 'low';
 }
 
+export interface ExtractionStrategy {
+  documentType: string;
+  queryIntent: string;
+  contentAreas: string[];
+  patternCategories: {
+    people: string[];
+    roles: string[];
+    designations: string[];
+    concepts: string[];
+    methods: string[];
+    data: string[];
+  };
+  extractionTargets: string[];
+}
+
 export class PlanningAgent extends BaseAgent {
   readonly name = 'PlanningAgent';
   readonly description = 'Creates intelligent execution strategies based on document analysis and query requirements';
@@ -51,14 +66,21 @@ export class PlanningAgent extends BaseAgent {
     const situationAnalysis = this.analyzeSituation(context);
     console.log(`📊 Situation Analysis:`, situationAnalysis);
     
+    // 🎯 CRITICAL: Create extraction strategy after DataInspector runs
+    if (context.sharedKnowledge.documentInsights) {
+      this.progressCallback?.onAgentProgress(this.name, 25, 'Creating extraction strategy from DataInspector analysis');
+      const extractionStrategy = this.createExtractionStrategy(context);
+      console.log(`✅ Created extraction strategy with ${Object.keys(extractionStrategy.patternCategories).length} pattern categories`);
+    }
+    
     // Report progress: Situation analyzed
-    this.progressCallback?.onAgentProgress(this.name, 30, 'Creating execution strategy');
+    this.progressCallback?.onAgentProgress(this.name, 40, 'Creating execution plan');
     
     // Create execution plan using LLM intelligence
     const executionPlan = await this.createExecutionPlan(context, situationAnalysis);
     
     // Report progress: Plan created
-    this.progressCallback?.onAgentProgress(this.name, 70, 'Storing execution plan');
+    this.progressCallback?.onAgentProgress(this.name, 80, 'Storing execution plan');
     
     // Store plan in shared knowledge for other agents
     context.sharedKnowledge.executionPlan = executionPlan;
@@ -251,7 +273,17 @@ Return as JSON:
       'data_inspector': 'DataInspector',
       'planningagent': 'PlanningAgent',
       'planning': 'PlanningAgent',
-      'planner': 'PlanningAgent'
+      'planner': 'PlanningAgent',
+      // Fix LLM typo: DataAnalzyzer -> DataAnalyzer
+      'dataanalzyzer': 'DataAnalyzer',
+      'data-analzyzer': 'DataAnalyzer',
+      'data_analzyzer': 'DataAnalyzer',
+      'dataanalyzer': 'DataAnalyzer',
+      'data-analyzer': 'DataAnalyzer',
+      'data_analyzer': 'DataAnalyzer',
+      'synthesiscoordinator': 'SynthesisCoordinator',
+      'synthesis-coordinator': 'SynthesisCoordinator',
+      'synthesis_coordinator': 'SynthesisCoordinator'
     };
     
     const normalized = normalizations[name.toLowerCase()] || name;
@@ -518,5 +550,338 @@ Return as JSON:
     const query = context.query.toLowerCase();
     const needsWebKeywords = ['latest', 'recent', 'current', 'news', 'trend', 'market'];
     return needsWebKeywords.some(keyword => query.includes(keyword));
+  }
+
+  /**
+   * 🎯 CRITICAL: Create extraction strategy based on DataInspector analysis
+   * This bridges DataInspector's findings with PatternGenerator's pattern creation
+   */
+  createExtractionStrategy(context: ResearchContext): ExtractionStrategy {
+    console.log(`🎯 PlanningAgent: Creating extraction strategy from DataInspector analysis`);
+    
+    const documentAnalysis = context.sharedKnowledge.documentInsights;
+    
+    if (!documentAnalysis) {
+      console.warn(`⚠️ No DataInspector analysis available, creating basic strategy`);
+      return this.createBasicExtractionStrategy(context);
+    }
+
+    // Parse query intent from user query
+    const queryIntent = this.parseQueryIntent(context.query);
+    
+    // Extract pattern categories from DataInspector's comprehensive analysis
+    const patternCategories = this.extractPatternCategories(documentAnalysis, context);
+    
+    const strategy: ExtractionStrategy = {
+      documentType: documentAnalysis.documentType || 'Generic Document',
+      queryIntent: queryIntent,
+      contentAreas: documentAnalysis.contentAreas || [],
+      patternCategories: patternCategories,
+      extractionTargets: this.determineExtractionTargets(documentAnalysis.documentType, queryIntent)
+    };
+
+    console.log(`✅ Created extraction strategy:`, {
+      documentType: strategy.documentType,
+      queryIntent: strategy.queryIntent,
+      contentAreas: strategy.contentAreas.length,
+      patternCategories: Object.keys(strategy.patternCategories).length,
+      extractionTargets: strategy.extractionTargets.length
+    });
+
+    // Store strategy in shared knowledge for PatternGenerator to use
+    context.sharedKnowledge.extractionStrategy = strategy;
+    
+    return strategy;
+  }
+
+  /**
+   * 🔍 Monitor PatternGenerator quality - are patterns aligned with query and document analysis?
+   */
+  assessPatternQuality(context: ResearchContext): 'excellent' | 'good' | 'insufficient' | 'misaligned' {
+    console.log(`🔍 PlanningAgent: Assessing pattern quality`);
+    
+    const patterns = context.patterns || [];
+    const strategy = context.sharedKnowledge.extractionStrategy;
+    
+    if (patterns.length === 0) {
+      console.warn(`❌ Pattern quality: insufficient - no patterns generated`);
+      return 'insufficient';
+    }
+
+    if (!strategy) {
+      console.warn(`⚠️ No extraction strategy available for pattern assessment`);
+      return 'good'; // Assume reasonable if no strategy to compare against
+    }
+
+    // Check if patterns target the right categories based on extraction strategy
+    const patternStrings = patterns.map(p => p.regexPattern || p.description || '').join(' ').toLowerCase();
+    
+    let categoryMatches = 0;
+    let totalCategories = 0;
+    
+    // Check coverage of pattern categories from extraction strategy
+    Object.entries(strategy.patternCategories).forEach(([category, terms]) => {
+      if (terms.length > 0) {
+        totalCategories++;
+        const hasTerms = terms.some(term => 
+          patternStrings.includes(term.toLowerCase()) || 
+          patternStrings.includes(term.toLowerCase().replace(/\s+/g, ''))
+        );
+        if (hasTerms) categoryMatches++;
+      }
+    });
+
+    // Check query alignment
+    const queryTerms = context.query.toLowerCase().split(/\s+/);
+    const queryAlignment = queryTerms.some(term => 
+      term.length > 3 && patternStrings.includes(term)
+    );
+
+    console.log(`📊 Pattern quality assessment:`, {
+      patternCount: patterns.length,
+      categoryMatches: categoryMatches,
+      totalCategories: totalCategories,
+      categoryAlignment: totalCategories > 0 ? (categoryMatches / totalCategories) : 0,
+      queryAlignment: queryAlignment
+    });
+
+    if (categoryMatches === 0 && !queryAlignment) {
+      console.warn(`❌ Pattern quality: misaligned - patterns don't match document analysis or query`);
+      return 'misaligned';
+    }
+
+    if (totalCategories > 0) {
+      const alignmentRatio = categoryMatches / totalCategories;
+      if (alignmentRatio >= 0.7) {
+        console.log(`✅ Pattern quality: excellent - ${Math.round(alignmentRatio * 100)}% alignment`);
+        return 'excellent';
+      } else if (alignmentRatio >= 0.4) {
+        console.log(`✅ Pattern quality: good - ${Math.round(alignmentRatio * 100)}% alignment`);
+        return 'good';
+      }
+    }
+
+    console.warn(`❌ Pattern quality: insufficient - low alignment with extraction strategy`);
+    return 'insufficient';
+  }
+
+  /**
+   * 🔍 Monitor Extractor success - did patterns actually extract relevant data?
+   */
+  assessExtractionSuccess(context: ResearchContext): { success: boolean, quality: 'excellent' | 'good' | 'poor' | 'empty', reason: string } {
+    console.log(`🔍 PlanningAgent: Assessing extraction success`);
+    
+    const extractedData = context.extractedData?.raw || [];
+    const strategy = context.sharedKnowledge.extractionStrategy;
+    
+    if (extractedData.length === 0) {
+      console.warn(`❌ Extraction failed: no data extracted`);
+      return { success: false, quality: 'empty', reason: 'No data extracted from documents' };
+    }
+
+    // Check if extracted data contains query-relevant information
+    const queryTerms = context.query.toLowerCase().split(/\s+/);
+    const extractedText = extractedData.map(item => item.text || '').join(' ').toLowerCase();
+    
+    const queryRelevance = queryTerms.filter(term => 
+      term.length > 3 && extractedText.includes(term)
+    ).length / Math.max(queryTerms.filter(term => term.length > 3).length, 1);
+
+    // Check if extracted data contains strategy-specific terms
+    let strategyRelevance = 0;
+    if (strategy) {
+      const allStrategyTerms = [
+        ...strategy.patternCategories.people,
+        ...strategy.patternCategories.methods,
+        ...strategy.patternCategories.concepts,
+        ...strategy.patternCategories.data
+      ].filter(term => term.length > 2);
+      
+      if (allStrategyTerms.length > 0) {
+        strategyRelevance = allStrategyTerms.filter(term => 
+          extractedText.includes(term.toLowerCase())
+        ).length / allStrategyTerms.length;
+      }
+    }
+
+    console.log(`📊 Extraction success assessment:`, {
+      itemCount: extractedData.length,
+      queryRelevance: Math.round(queryRelevance * 100) + '%',
+      strategyRelevance: Math.round(strategyRelevance * 100) + '%'
+    });
+
+    // Determine quality based on relevance scores
+    if (queryRelevance >= 0.6 || strategyRelevance >= 0.4) {
+      console.log(`✅ Extraction success: excellent quality`);
+      return { success: true, quality: 'excellent', reason: 'High relevance to query and strategy' };
+    } else if (queryRelevance >= 0.3 || strategyRelevance >= 0.2) {
+      console.log(`✅ Extraction success: good quality`);
+      return { success: true, quality: 'good', reason: 'Moderate relevance to query and strategy' };
+    } else if (extractedData.length >= 3) {
+      console.warn(`⚠️ Extraction success: poor quality - data exists but low relevance`);
+      return { success: false, quality: 'poor', reason: 'Extracted data has low relevance to query' };
+    } else {
+      console.warn(`❌ Extraction success: poor quality - insufficient relevant data`);
+      return { success: false, quality: 'poor', reason: 'Insufficient relevant data extracted' };
+    }
+  }
+
+  /**
+   * 🔄 Re-engage PatternGenerator with refined strategy when extraction fails
+   */
+  async reEngagePatternGenerator(context: ResearchContext, orchestrator: any): Promise<void> {
+    console.log(`🔄 PlanningAgent: Re-engaging PatternGenerator with refined strategy`);
+    
+    // Create refined extraction strategy
+    const currentStrategy = context.sharedKnowledge.extractionStrategy;
+    const refinedStrategy = this.refineExtractionStrategy(currentStrategy, context);
+    
+    console.log(`🎯 Refined extraction strategy:`, {
+      changes: this.getStrategyChanges(currentStrategy, refinedStrategy),
+      newPatternCategories: Object.keys(refinedStrategy.patternCategories).length
+    });
+    
+    // Update strategy in shared knowledge
+    context.sharedKnowledge.extractionStrategy = refinedStrategy;
+    
+    // Re-run PatternGenerator with refined strategy
+    console.log(`🔄 Re-running PatternGenerator with refined strategy...`);
+    try {
+      await orchestrator.runSingleAgent('PatternGenerator', context);
+      console.log(`✅ PatternGenerator re-engagement completed`);
+      
+      // Assess new pattern quality
+      const newPatternQuality = this.assessPatternQuality(context);
+      console.log(`📊 New pattern quality: ${newPatternQuality}`);
+      
+    } catch (error) {
+      console.error(`❌ PatternGenerator re-engagement failed:`, error);
+      throw new Error(`Failed to re-engage PatternGenerator: ${error}`);
+    }
+  }
+
+  // Helper methods for extraction strategy creation and refinement
+  
+  private createBasicExtractionStrategy(context: ResearchContext): ExtractionStrategy {
+    const queryIntent = this.parseQueryIntent(context.query);
+    
+    return {
+      documentType: 'Generic Document',
+      queryIntent: queryIntent,
+      contentAreas: [],
+      patternCategories: {
+        people: [],
+        roles: [],
+        designations: [],
+        concepts: this.extractBasicConcepts(context.query),
+        methods: [],
+        data: queryIntent.includes('performance') ? ['metrics', 'results', 'scores'] : []
+      },
+      extractionTargets: ['content', 'key_information']
+    };
+  }
+
+  private parseQueryIntent(query: string): string {
+    const q = query.toLowerCase();
+    
+    if (q.includes('best') || q.includes('top')) return 'performance_ranking';
+    if (q.includes('method') || q.includes('approach')) return 'methodology';
+    if (q.includes('how') || q.includes('what')) return 'explanation';
+    if (q.includes('compare')) return 'comparison';
+    if (q.includes('performance') || q.includes('result')) return 'performance';
+    
+    return 'general_information';
+  }
+
+  private extractPatternCategories(documentInsights: any, context: ResearchContext): any {
+    // Extract from DataInspector's comprehensive analysis
+    const categories = {
+      people: documentInsights.people || [],
+      roles: [], // Could be extracted from people context
+      designations: [], // Could be extracted from people context  
+      concepts: documentInsights.concepts || [],
+      methods: documentInsights.methods || [],
+      data: []
+    };
+
+    // Add query-specific terms to relevant categories
+    const queryTerms = context.query.toLowerCase().split(/\s+/);
+    queryTerms.forEach(term => {
+      if (term.length > 3 && !['best', 'method', 'approach', 'what', 'how'].includes(term)) {
+        if (!categories.concepts.includes(term)) {
+          categories.concepts.push(term);
+        }
+      }
+    });
+
+    return categories;
+  }
+
+  private determineExtractionTargets(documentType: string, queryIntent: string): string[] {
+    const targets = ['content'];
+    
+    if (documentType === 'Research Paper') {
+      targets.push('abstract', 'methodology', 'results', 'conclusions');
+      
+      if (queryIntent.includes('performance')) {
+        targets.push('performance_metrics', 'benchmarks');
+      }
+      if (queryIntent.includes('methodology')) {
+        targets.push('algorithms', 'approaches');
+      }
+    } else if (documentType === 'Tutorial') {
+      targets.push('steps', 'instructions', 'examples');
+    } else if (documentType === 'Resume') {
+      targets.push('experience', 'skills', 'projects', 'achievements');
+    }
+    
+    return targets;
+  }
+
+  private refineExtractionStrategy(currentStrategy: ExtractionStrategy, context: ResearchContext): ExtractionStrategy {
+    if (!currentStrategy) {
+      return this.createExtractionStrategy(context);
+    }
+
+    // Create a more focused strategy based on what failed
+    const refined = { ...currentStrategy };
+    
+    // Add more specific terms based on document content
+    const sampleContent = context.ragResults.chunks.slice(0, 3)
+      .map(chunk => chunk.text)
+      .join(' ')
+      .toLowerCase();
+    
+    // Extract additional technical terms from actual content
+    const technicalTerms = sampleContent.match(/\b[A-Z]{2,}\b|\b\w*(?:algorithm|method|approach|technique)\w*\b/gi) || [];
+    refined.patternCategories.methods.push(...technicalTerms.slice(0, 5));
+    
+    console.log(`🎯 Strategy refinement added ${technicalTerms.length} technical terms`);
+    
+    return refined;
+  }
+
+  private getStrategyChanges(oldStrategy: ExtractionStrategy, newStrategy: ExtractionStrategy): string[] {
+    if (!oldStrategy) return ['Created new strategy'];
+    
+    const changes = [];
+    if (oldStrategy.queryIntent !== newStrategy.queryIntent) {
+      changes.push(`Query intent: ${oldStrategy.queryIntent} → ${newStrategy.queryIntent}`);
+    }
+    
+    const oldMethodCount = oldStrategy.patternCategories.methods.length;
+    const newMethodCount = newStrategy.patternCategories.methods.length;
+    if (oldMethodCount !== newMethodCount) {
+      changes.push(`Methods: ${oldMethodCount} → ${newMethodCount}`);
+    }
+    
+    return changes.length > 0 ? changes : ['Minor refinements'];
+  }
+
+  private extractBasicConcepts(query: string): string[] {
+    return query.toLowerCase()
+      .split(/\s+/)
+      .filter(term => term.length > 3 && !['best', 'method', 'what', 'how', 'give', 'explanation'].includes(term))
+      .slice(0, 5);
   }
 }

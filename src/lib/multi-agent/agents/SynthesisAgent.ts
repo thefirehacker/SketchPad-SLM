@@ -372,7 +372,7 @@ SYNTHESIS INSTRUCTIONS:
 ${this.getCrossDocumentSynthesisInstructions(query, documentAnalysis)}
 
 CRITICAL RULES:
-1. **NEVER MIX ENTITY ACHIEVEMENTS**: Tyler's achievements ≠ Rutwik's achievements
+1. **NEVER MIX ENTITY ACHIEVEMENTS**: Person A's achievements ≠ Person B's achievements
 2. **CLEAR ATTRIBUTION**: Always specify whose achievement/skill/method each fact represents
 3. **CROSS-DOCUMENT REASONING**: Use information from multiple documents correctly
 4. **PROPER RELATIONSHIPS**: If creating tutorials, use Source knowledge to teach Target person

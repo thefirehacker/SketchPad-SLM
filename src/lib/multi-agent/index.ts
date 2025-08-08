@@ -17,6 +17,10 @@ import { PatternGeneratorAgent } from './agents/PatternGeneratorAgent';
 import { ExtractionAgent } from './agents/ExtractionAgent';
 import { WebSearchAgent } from './agents/WebSearchAgent';
 import { SynthesisAgent } from './agents/SynthesisAgent';
+import { ResponseFormatterAgent } from './agents/ResponseFormatterAgent';
+// New multi-synthesis agents
+import { DataAnalysisAgent } from './agents/DataAnalysisAgent';
+import { SynthesisCoordinator } from './agents/SynthesisCoordinator';
 
 // Core exports
 export { Orchestrator } from './core/Orchestrator';
@@ -48,6 +52,9 @@ export { PatternGeneratorAgent } from './agents/PatternGeneratorAgent';
 export { ExtractionAgent } from './agents/ExtractionAgent';
 export { WebSearchAgent } from './agents/WebSearchAgent';
 export { SynthesisAgent } from './agents/SynthesisAgent';
+export { ResponseFormatterAgent } from './agents/ResponseFormatterAgent';
+export { DataAnalysisAgent } from './agents/DataAnalysisAgent';
+export { SynthesisCoordinator } from './agents/SynthesisCoordinator';
 
 // Factory function
 export function createMultiAgentSystem(
@@ -61,9 +68,9 @@ export function createMultiAgentSystem(
   const messageBus = new MessageBus();
   
   // Build list of available agents based on configuration
-  const availableAgents = ['QueryPlanner', 'DataInspector', 'PatternGenerator', 'Extractor', 'Synthesizer'];
+  const availableAgents = ['QueryPlanner', 'DataInspector', 'PatternGenerator', 'Extractor', 'DataAnalyzer', 'SynthesisCoordinator', 'ResponseFormatter'];
   if (config?.enableWebSearch !== false) {
-    availableAgents.splice(4, 0, 'WebSearchAgent'); // Insert WebSearchAgent before Synthesizer
+    availableAgents.splice(4, 0, 'WebSearchAgent'); // Insert WebSearchAgent before DataAnalyzer
   }
   
   // Register all agents in new intelligent architecture order
@@ -80,7 +87,13 @@ export function createMultiAgentSystem(
     console.log('🌐 WebSearchAgent disabled by configuration');
   }
   
+  // Register new multi-synthesis agents
+  registry.register(new DataAnalysisAgent(llm)); // Clean and categorize data
+  registry.register(new SynthesisCoordinator(llm)); // Coordinate synthesis pipeline
+  
+  // Keep original SynthesisAgent as fallback for now
   registry.register(new SynthesisAgent(llm));
+  registry.register(new ResponseFormatterAgent(llm, progressCallback)); // Ensure direct question answering with good formatting
   
   // Create and return orchestrator with progress callback and config
   return new Orchestrator(registry, messageBus, llm, progressCallback, config);
